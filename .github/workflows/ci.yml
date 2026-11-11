@@ -1,0 +1,237 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      restore_export:
+        description: 'Restore vcpkg export from cache'
+        type: boolean
+        default: false
+      target_pattern:
+        description: 'Build jobs matching this pattern'
+        type: string
+        default: "^"
+      upload_assets:
+        description: 'Upload source assets'
+        type: boolean
+        default: false
+  # Keep cache alive
+  schedule:
+    - cron: '10 21 * * 2,5'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  arm64-android:
+    if: ${{ contains('^arm64-android$', inputs.target_pattern) }}
+    runs-on: ubuntu-24.04
+    outputs:
+      assets: ${{ steps.build.outputs.assets }}
+    steps:
+    - name: git checkout
+      uses: actions/checkout@v6.1.0
+      with:
+        persist-credentials: false
+    - name: Build
+      id: build
+      uses: $/.github/actions/build-mapper
+      with:
+        target_triplet: arm64-android-dynamic-release
+        host_triplet: x64-linux-dynamic-release
+        restore_export: ${{ inputs.restore_export }}
+        cmake_args: >-
+          -DANDROID_ABI=arm64-v8a
+          -DANDROID_MIN_SDK_VERSION=24
+          -DANDROID_TARGET_SDK_VERSION=28
+          -DANDROID_SDK=/usr/local/lib/android/sdk
+          -DANDROID_SDK_BUILD_TOOLS_REVISION=34
+          -DCMAKE_SYSTEM_VERSION=24
+          -DANDROIDDEPLOYQT_ARGS=--android-platform;android-34
+
+  arm64-macos:
+    if: ${{ contains('^arm64-macos$', inputs.target_pattern) }}
+    runs-on: macos-15
+    outputs:
+      assets: ${{ steps.build.outputs.assets }}
+    steps:
+    - name: git checkout
+      uses: actions/checkout@v6.1.0
+      with:
+        persist-credentials: false
+    - name: Build
+      id: build
+      uses: $/.github/actions/build-mapper
+      with:
+        target_triplet: arm64-osx-dynamic-release
+        host_triplet: arm64-osx-dynamic-release
+        restore_export: ${{ inputs.restore_export }}
+        cmake_args: >-
+          -DMapper_SYSTEM_NAME=macOS-arm64
+
+  x64-android:
+    if: ${{ contains('^x64-android$', inputs.target_pattern) }}
+    runs-on: ubuntu-24.04
+    outputs:
+      assets: ${{ steps.build.outputs.assets }}
+    steps:
+    - name: git checkout
+      uses: actions/checkout@v6.1.0
+      with:
+        persist-credentials: false
+    - name: Build
+      id: build
+      uses: $/.github/actions/build-mapper
+      with:
+        target_triplet: x64-android-dynamic-release
+        host_triplet: x64-linux-dynamic-release
+        restore_export: ${{ inputs.restore_export }}
+        cmake_args: >-
+          -DANDROID_ABI=x86_64
+          -DANDROID_MIN_SDK_VERSION=24
+          -DANDROID_TARGET_SDK_VERSION=28
+          -DANDROID_SDK=/usr/local/lib/android/sdk
+          -DANDROID_SDK_BUILD_TOOLS_REVISION=34
+          -DCMAKE_SYSTEM_VERSION=24
+          -DANDROIDDEPLOYQT_ARGS=--android-platform;android-34
+
+  x64-linux-debug:
+    if: ${{ contains('^x64-linux-debug$', inputs.target_pattern) }}
+    runs-on: ubuntu-24.04
+    outputs:
+      assets: ${{ steps.build.outputs.assets }}
+    steps:
+    - name: git checkout
+      uses: actions/checkout@v6.1.0
+      with:
+        persist-credentials: false
+    - name: Build
+      id: build
+      uses: $/.github/actions/build-mapper
+      with:
+        target_triplet: x64-linux-dynamic-release
+        host_triplet: x64-linux-dynamic-release
+        restore_export: ${{ inputs.restore_export }}
+        cmake_args: >+
+          -DCMAKE_BUILD_TYPE=Debug
+
+  x64-macos:
+    if: ${{ contains('^x64-macos$', inputs.target_pattern) }}
+    runs-on: macos-15-intel
+    outputs:
+      assets: ${{ steps.build.outputs.assets }}
+    steps:
+    - name: git checkout
+      uses: actions/checkout@v6.1.0
+      with:
+        persist-credentials: false
+    - name: Build
+      id: build
+      uses: $/.github/actions/build-mapper
+      with:
+        target_triplet: x64-osx-dynamic-release
+        host_triplet: x64-osx-dynamic-release
+        restore_export: ${{ inputs.restore_export }}
+        cmake_args:
+          -DMapper_SYSTEM_NAME=macOS-x64
+
+  x64-windows:
+    if: ${{ contains('^x64-windows$', inputs.target_pattern) }}
+    runs-on: windows-2025-vs2026
+    outputs:
+      assets: ${{ steps.build.outputs.assets }}
+    steps:
+    - name: git checkout
+      uses: actions/checkout@v6.1.0
+      with:
+        persist-credentials: false
+    - name: Build
+      id: build
+      uses: $/.github/actions/build-mapper
+      with:
+        target_triplet: x64-windows-dynamic-release
+        host_triplet: x64-windows-dynamic-release
+        restore_export: ${{ inputs.restore_export }}
+        cmake_args:
+          -DVCPKG_CRT_LINKAGE=dynamic
+          -DCMAKE_C_COMPILER=cl
+          -DCMAKE_CXX_COMPILER=cl
+
+  # Uploads to GH releases need permissions:write.
+  # A GHA "environment" is used to gate when to run this sensitive job.
+  upload-assets:
+    name: Upload source assets
+    needs: [ arm64-android, arm64-macos, x64-android, x64-macos, x64-windows ]
+    if: ${{ inputs.upload_assets }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: Release
+      deployment: false
+    permissions:
+      contents: write
+    steps:
+    - name: checkout
+      uses: actions/checkout@v6.1.0
+      with:
+        persist-credentials: false
+    - name: Restore arm64-android assets
+      uses: actions/cache/restore@v5
+      with:
+        path: cache/downloads
+        key: ${{ needs.arm64-android.outputs.assets }}
+        fail-on-cache-miss: true
+    - name: Restore arm64-macos assets
+      uses: actions/cache/restore@v5
+      with:
+        path: cache/downloads
+        key: ${{ needs.arm64-macos.outputs.assets }}
+        fail-on-cache-miss: true
+    - name: Restore x64-android assets
+      uses: actions/cache/restore@v5
+      with:
+        path: cache/downloads
+        key: ${{ needs.x64-android.outputs.assets }}
+        fail-on-cache-miss: true
+    - name: Restore x64-osx assets
+      uses: actions/cache/restore@v5
+      with:
+        path: cache/downloads
+        key: ${{ needs.x64-macos.outputs.assets }}
+        fail-on-cache-miss: true
+    - name: Restore x64-windows assets
+      uses: actions/cache/restore@v5
+      with:
+        path: cache/downloads
+        key: ${{ needs.x64-windows.outputs.assets }}
+        fail-on-cache-miss: true
+    - name: gh release upload assets-collection
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -e
+        rm -Rf \
+          cache/downloads/tools \
+          cache/downloads/automake-* \
+          cache/downloads/cmake-4* \
+          cache/downloads/dbus-* \
+          cache/downloads/gettext-* \
+          cache/downloads/glib-* \
+          cache/downloads/GNOME-at-spi2-* \
+          cache/downloads/jom_* \
+          cache/downloads/libcap-* \
+          cache/downloads/msys2-* \
+          cache/downloads/nasm-* \
+          cache/downloads/pkgconf-* \
+          cache/downloads/python-3* \
+          cache/downloads/strawberry-perl-* \
+          cache/downloads/systemd-* \
+          cache/downloads/util-linux-* \
+          cache/downloads/win_flex_bison-* \
+          #
+        gh release create --draft --title assets-collection assets-collection || true
+        gh release upload --clobber assets-collection cache/downloads/*
