@@ -166,7 +166,7 @@ runs:
         esac
 
     - name: vcpkg install --only-downloads
-      if: ${{ steps.restore-export.outputs.cache-hit != 'true' }}
+      if: ${{ steps.restore-export.outputs.cache-hit != 'true' && steps.workflow-configuration.outputs.label == 'vcpkg' }}
       shell: bash
       env:
         HOST_TRIPLET: ${{ inputs.host_triplet }}
